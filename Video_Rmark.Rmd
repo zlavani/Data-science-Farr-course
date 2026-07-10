@@ -1,0 +1,464 @@
+---
+title: "Video CD 21"
+output: pdf_document
+        encoding = "UTF-8"
+---
+<!-- https://ourcodingclub.github.io/tutorials/mixed-models/#six -->
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(gridExtra)
+setwd("D:\\Lorenzo\\Cursos\\R_markdown\\CD")
+```
+
+# Efectos Aleatorios de las Variables. "This changes everything"
+![unchanged image](MAPA.jpg)
+
+Cargamos el Dataset utilizado.
+
+We are going to focus on a fictional study system, dragons, so that we don’t have to get too distracted with the specifics of this example. 
+
+Imagine that we decided to train dragons and so we went out into the mountains and collected data on dragon intelligence (testScore) as a prerequisite. 
+
+We sampled individuals with a range of body lengths across three sites in eight different mountain ranges. Start by loading the data and having a look at them.
+
+
+```{r cars}
+load("dragons.RData")
+
+dragons
+
+```
+
+## Distribucion de los datos
+
+
+
+```{r dragons, echo=FALSE}
+### Histograma del Score
+hist(dragons$testScore)  # seems close to normal distribution - good!
+
+```
+
+## Our question: is test score affected by body length??
+
+###---- Fit all data in one analysis -----###
+
+### One way to analyse this data would be to try fitting a linear model to all our data, ignoring the sites and the mountain ranges for now.
+
+# Modelo Lineal Sin tener en cuanta Ef Aleatorios
+
+```{r pressure, warning = FALSE}
+
+## Estandarizamos
+dragons$bodyLength2 <- scale(dragons$bodyLength)
+
+###---- Fit all data in one analysis -----###
+
+# One way to analyse this data would be to try fitting a 
+# linear model to all our data, ignoring the sites and the mountain ranges 
+# for now.
+
+# Modelo Lineal Sin tener en cuanta Ef Aleatorios
+library(lme4)
+
+basic.lm <- lm(testScore ~ bodyLength2, data = dragons)
+
+summary(basic.lm)
+```
+## Supuestos
+```{r , warning = FALSE}
+
+## Modelo
+
+library(ggplot2)  # load the package
+
+(prelim_plot <- ggplot(dragons, aes(x = bodyLength, y = testScore)) +
+    geom_point() +
+    geom_smooth(method = "lm"))
+
+### Supuestos?
+
+# plot(basic.lm, which = 1)  # not perfect, but look alright
+
+rlm <- residuals(basic.lm, type = "pearson") # = estandarizados.
+predlm <- fitted(basic.lm) 
+plot(x = predlm,
+     y = rlm,
+     xlab = "Predichos",
+     ylab = "Residuos estandarizados",
+     main = "Grafico de dispersion de RE vs PRED")
+abline(h = 0, lty = 2)
+
+
+## qqplot 
+
+plot(basic.lm, which = 2)  
+
+# a bit off at the extremes, but that's often the case; again doesn't look too bad
+
+shapiro.test(rlm)
+```
+
+
+# Pero...
+¿Hay independencia de las observaciones? ¿Son nuestros datos Independientes?
+
+Se tomaron multiples muestras de las 8 montañas
+
+Es posible que dentro de cada montaña se obtengan valores similares entre si, es decir
+que haya cierta correlacion de los datos.
+No queremos que las pseudoreplicas invadan nuestro analisis.
+
+
+```{r , warning = FALSE}
+
+## Have a look at the data to see if above is true
+boxplot(testScore ~ mountainRange, data = dragons)  # certainly looks like something is going on here
+
+## We could also plot it colouring points by mountain range
+ggplot(dragons, aes(x = bodyLength, y = testScore, colour = mountainRange))+
+  geom_point(size = 2)+
+  theme_classic()+
+  theme(legend.position = "none")
+
+```
+
+From the above plots, it looks like our mountain ranges vary both in the dragon body length AND in their test scores. This confirms that our observations from within each of the ranges aren’t independent. We can’t ignore that: as we’re starting to see, it could lead to a completely erroneous conclusion.
+
+# ¿Que hacemos entonces?
+Run multiple analyses
+We could run many separate analyses and fit a regression for each of the mountain ranges.
+
+Lets have a quick look at the data split by mountain range. We use the facet_wrap to do that:
+```{r , warning = FALSE}
+(split_plot <- ggplot(aes(bodyLength, testScore), data = dragons) + 
+  geom_point() + 
+  facet_wrap(~ mountainRange) + # create a facet for each mountain range
+  xlab("length") + 
+  ylab("test score"))
+
+
+#----- Modify the model -----###
+
+## We want to use all the data, but account for the data coming from different mountain ranges
+
+## let's add mountain range as a fixed effect to our basic.lm
+
+mountain.lm <- lm(testScore ~ bodyLength2 + mountainRange, data = dragons)
+summary(mountain.lm)
+
+# Now body length is not significant. 
+#But let’s think about what we are doing here for a second. 
+#The above model is estimating the difference in test scores between the 
+#mountain ranges - we can see all of them in the model output returned by 
+# summary(). 
+#But we are not interested in quantifying test scores for each specific 
+#mountain range: we just want to know whether body length affects test scores
+#and we want to simply control for the variation coming from mountain ranges.
+# 
+# This is what we refer to as “random factors” and so we arrive at mixed effects models. Ta-daa!
+
+```
+# Porqué no se consideró a camada como de efectos fijos?
+
+# Modelos Mixtos
+
+A mixed model is a good choice here: it will allow us to use all the data
+we have (higher sample size) and account for the correlations between data coming from the sites and mountain ranges. We will also estimate fewer parameters and avoid problems with multiple comparisons that we would encounter while using separate regressions.
+
+We are going to work in lme4, so load the package 
+
+
+In broad terms, fixed effects are variables that we expect will have an effect on the dependent/response variable: they’re what you call explanatory variables in a standard linear regression. In our case, we are interested in making conclusions about how dragon body length impacts the dragon’s test score. So body length is a fixed effect and test score is the dependent variable.
+
+On the other hand, random effects are usually grouping factors for which we are trying to control. They are always categorical, as you can’t force R to treat a continuous variable as a random effect. A lot of the time we are not specifically interested in their impact on the response variable, but we know that they might be influencing the patterns we see.
+
+Additionally, the data for our random effect is just a sample of all the possibilities: with unlimited time and funding we might have sampled every mountain where dragons live, every school in the country, every chocolate in the box), but we usually tend to generalise results to a whole population based on representative sampling. We don’t care about estimating how much better pupils in school A have done compared to pupils in school B, but we know that their respective teachers might be a reason why their scores would be different, and we’d like to know how much variation is attributable to this when we predict scores for pupils in school Z.
+
+## Us
+In our particular case, we are looking to control for the effects of mountain range. We haven’t sampled all the mountain ranges in the world (we have eight) so our data are just a sample of all the existing mountain ranges. We are not really interested in the effect of each specific mountain range on the test score: we hope our model would also be generalisable to dragons from other mountain ranges! However, we know that the test scores from within the ranges might be correlated so we want to control for that.
+
+If we specifically chose eight particular mountain ranges a priori and we were interested in those ranges and wanted to make predictions about them, then mountain range would be fitted as a fixed effect.
+
+## More about random effects
+Note that the golden rule is that you generally want your random effect to have at least five levels. So, for instance, if we wanted to control for the effects of dragon’s sex on intelligence, we would fit sex (a two level factor: male or female) as a fixed, not random, effect.
+
+This is, put simply, because estimating variance on few data points is very imprecise. Mathematically you could, but you wouldn’t have a lot of confidence in it. If you only have two or three levels, the model will struggle to partition the variance - it will give you an output, but not necessarily one you can trust.
+
+Finally, keep in mind that the name random doesn’t have much to do with mathematical randomness. Yes, it’s confusing. Just think about them as the grouping variables for now. Strictly speaking it’s all about making our models representative of our questions and getting better estimates. Hopefully, our next few examples will help you make sense of how and why they’re used.
+
+## Al final
+In the end, the big questions are: what are you trying to do? What are you trying to make predictions about? What is just variation (a.k.a “noise”) that you need to control for?
+
+
+# Primer Modelo Mixto
+
+Let’s fit our first mixed model
+Alright! Still with me? We have a response variable, the test score and we are attempting to explain part of the variation in test score through fitting body length as a fixed effect. But the response variable has some residual variation (i.e. unexplained variation) associated with mountain ranges. By using random effects, we are modeling that unexplained variation through variance.
+
+[Sidenote: If you are confused between variation and variance: variation is a generic word, similar to dispersion or variability; variance is a particular measure of variation; it quantifies the dispersion, if you wish.]
+
+Note that our question changes slightly here: while we still want to know whether there is an association between dragon’s body length and the test score, we want to know if that association exists after controlling for the variation in mountain ranges.
+
+We will fit the random effect usingv the syntax (1|variableName):
+
+
+
+
+
+```{r , warning = FALSE}
+library(lme4)
+mixed.lmer <- lmer(testScore ~ bodyLength2 + (1|mountainRange), data = dragons)
+summary(mixed.lmer)
+
+```
+
+Once we account for the mountain ranges, it’s obvious that dragon body length doesn’t actually explain the differences in the test scores. How is it obvious? I hear you say?
+
+Take a look at the summary output: notice how the model estimate is smaller than its associated error? That means that the effect, or slope, cannot be distinguised from zero.
+
+Keep in mind that the random effect of the mountain range is meant to capture all the influences of mountain ranges on dragon test scores - whether we observed those influences explicitly or not, whether those influences are big or small etc. It could be many, many teeny-tiny influences that, when combined, affect the test scores and that’s what we are hoping to control for.
+
+We can see the variance for mountainRange = 339.7. Mountain ranges are clearly important: they explain a lot of variation. How do we know that? We can take the variance for the mountainRange and divide it by the total variance: 60%
+
+So the differences between mountain ranges explain ~60% of the variance that’s “left over” after the variance explained by our fixed effects.
+
+```{r , warning = FALSE}
+
+plot(mixed.lmer)  # looks alright, no patterns evident
+qqnorm(resid(mixed.lmer))
+qqline(resid(mixed.lmer))  # points fall nicely onto the line - good!
+
+rlmer <- residuals(mixed.lmer, type = "pearson") # = estandarizados.
+shapiro.test(rlmer)
+#Supuestos de la parte aleatoria, vemos normalidad de la varianza?
+alfai<-ranef(mixed.lmer)$mountainRange$'(Intercept)'
+qqnorm(alfai, cex.main=.8)
+qqline(alfai)
+shapiro.test(alfai)
+
+```
+## ¿Significancia de la parte fija?
+
+
+## ¿Explican algo las varianzas dadas por las montañas?
+
+
+
+```{r , warning = FALSE}
+######  significacion parte fija #####
+mixed.mo <- lmer(testScore ~ (1|mountainRange), data = dragons)
+summary
+# RARO
+anova(mixed.mo,mixed.lmer)
+
+# RAROX2
+AIC(mixed.mo,mixed.lmer)
+
+
+
+## Grafico de componentes de varianza
+#Random effects:
+ #Groups        Name        Variance Std.Dev.
+ #mountainRange (Intercept) 339.7    18.43   
+ #Residual                  223.8    14.96
+
+# Simple Pie Chart
+slices <- c(339.7, 223.8)
+lbls <- c("Montaña", "Residual")
+pie(slices, labels = lbls, main="Variance components")
+```
+```{r , warning = FALSE}
+plot(mixed.lmer)  # looks alright, no patterns evident
+qqnorm(resid(mixed.lmer))
+qqline(resid(mixed.lmer))  # points fall nicely onto the line - good!
+
+rlmer <- residuals(mixed.lmer, type = "pearson") # = estandarizados.
+shapiro.test(rlmer)
+#Supuestos de la parte aleatoria, vemos normalidad de la varianza?
+alfai<-ranef(mixed.lmer)$mountainRange$'(Intercept)'
+qqnorm(alfai, cex.main=.8)
+qqline(alfai)
+shapiro.test(alfai)
+
+```
+
+
+## No es muy claro el grafico
+
+
+```{r , warning = FALSE}
+library(ggplot2)
+p <- ggplot(dragons, aes(testScore, bodyLength , color = mountainRange, group = mountainRange))
+p + geom_point() + labs(x = "Hormona", y = "Ganancia en peso (dgr)") +
+geom_line()
+
+library(sjPlot)
+tab_model(mixed.lmer)
+plot_model(mixed.lmer, sort.est = TRUE)
+```
+## ----- Second mixed model -----##
+Based on the above, using following specification would be **wrong**, as it would imply that there are only three sites with observations at each of the 8 mountain ranges (crossed):
+```{r , warning = FALSE}
+
+
+### model
+mixed.WRONG <- lmer(testScore ~ bodyLength2 + (1|mountainRange) + (1|site), data = dragons)  # treats the two random effects as if they are crossed
+summary(mixed.WRONG)
+
+
+
+```
+But we can go ahead and fit a new model, one that takes into account both the differences between the mountain ranges, as well as the differences between the sites within those mountain ranges by using our sample variable.
+
+Our question gets adjusted slightly again: Is there an association between body length and intelligence in dragons after controlling for variation in mountain ranges and sites within mountain ranges?
+```{r , warning = FALSE}
+
+dragons <- within(dragons, sample <- factor(mountainRange:site))
+mixed.lmer2 <- lmer(testScore ~ bodyLength2 + (1|mountainRange) + (1|sample), data = dragons)  # the syntax stays the same, but now the nesting is taken into account
+summary(mixed.lmer2)
+
+slices <- c(327.56, 208.58,23.09)
+lbls <- c("Montaña", "Residual","Sample")
+pie(slices, labels = lbls, main="Variance components")
+### summary
+
+### plot
+(mm_plot <- ggplot(dragons, aes(x = bodyLength, y = testScore, colour = site)) +
+    facet_wrap(~mountainRange, nrow=2) +   # a panel for each mountain range
+    geom_point(alpha = 0.5) +
+    theme_classic() +
+    geom_line(data = cbind(dragons, pred = predict(mixed.lmer2)), aes(y = pred), size = 1) +  # adding predicted line from mixed model 
+    theme(legend.position = "none",
+          panel.spacing = unit(2, "lines"))  # adding space between panels
+)
+
+```
+```{r , warning = FALSE}
+library(ggeffects)  # install the package first if you haven't already, then load it
+
+# Extract the prediction data frame
+pred.mm <- ggpredict(mixed.lmer2, terms = c("bodyLength2"))  # this gives overall predictions for the model
+
+# Plot the predictions 
+
+(ggplot(pred.mm) + 
+   geom_line(aes(x = x, y = predicted)) +          # slope
+   geom_ribbon(aes(x = x, ymin = predicted - std.error, ymax = predicted + std.error), 
+               fill = "lightgrey", alpha = 0.5) +  # error band
+   geom_point(data = dragons,                      # adding the raw data (scaled values)
+              aes(x = bodyLength2, y = testScore, colour = mountainRange)) + 
+   labs(x = "Body Length (indexed)", y = "Test Score", 
+        title = "Body length does not affect intelligence in dragons") + 
+   theme_minimal()
+)
+
+#What if you want to visualise how the relationships vary according to different levels 
+#of random effects? You can specify type = "re" (for “random effects”) in the ggpredict() 
+#function, and add the random effect name to the terms argument.
+
+ggpredict(mixed.lmer2, terms = c("bodyLength2", "mountainRange"), type = "re") %>% 
+   plot() +
+   labs(x = "Body Length", y = "Test Score", title = "Effect of body size on intelligence in dragons") + 
+   theme_minimal()
+
+# You can clearly see the random intercepts and fixed slopes from this graph. When assessing the quality of your model, it’s always a good idea to look at the raw data, the summary output, and the predictions all together to make sure you understand what is going on (and that you have specified the model correctly).
+
+# Another way to visualise mixed model results, if you are interested in showing the variation among levels of your random effects, is to plot the departure from the overall model estimate for intercepts - and slopes, if you have a random slope model:
+
+library(sjPlot)
+
+# Visualise random effects 
+(re.effects <- plot_model(mixed.lmer2, type = "re", show.values = TRUE))
+
+# show summary
+summary(mixed.lmer2)
+# Careful here! The values you see are NOT actual values, but rather the difference between the general intercept or slope value found in your model summary and the estimate for this specific level of random effect. For instance, the relationship for dragons in the Maritime mountain range would have a slope of (-2.91 + 0.67) = -2.24 and an intercept of (20.77 + 51.43) = 72.20.
+library(stargazer)
+```
+
+
+
+
+
+
+
+```{r , warning = FALSE}
+
+library(stargazer)
+stargazer(mixed.lmer2, type = "text",
+          digits = 3,
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          digit.separator = "")
+```
+
+
+
+Fixed effects structure
+Before we start, again: think twice before trusting model selection!
+
+Most of you are probably going to be predominantly interested in your fixed effects, so let’s start here. lme4 doesn’t spit out p-values for the parameters by default. This is a conscious choice made by the authors of the package, as there are many problems with p-values (I’m sure you are aware of the debates!).
+
+You will inevitably look for a way to assess your model though so here are a few solutions on how to go about hypothesis testing in linear mixed models (LMMs):
+
+From worst to best:
+
+Wald Z-tests
+Wald t-tests (but LMMs need to be balanced and nested)
+Likelihood ratio tests (via anova() or drop1())
+MCMC or parametric bootstrap confidence intervals
+See this link for more information and further reading.
+
+I think that MCMC and bootstrapping are a bit out of our reach for this workshop so let’s have a quick go at likelihood ratio tests using anova(). With large sample sizes, p-values based on the likelihood ratio are generally considered okay. NOTE: With small sample sizes, you might want to look into deriving p-values using the Kenward-Roger or Satterthwaite approximations (for REML models). Check out the pbkrtest package.
+
+Fit the models, a full model and a reduced model in which we dropped our fixed effect (bodyLength2):
+
+Copy contents
+full.lmer <- lmer(testScore ~ bodyLength2 + (1|mountainRange) + (1|sample), 
+				  data = dragons, REML = FALSE)
+reduced.lmer <- lmer(testScore ~ 1 + (1|mountainRange) + (1|sample), 
+					     data = dragons, REML = FALSE)
+Compare them:
+
+Copy contents
+anova(reduced.lmer, full.lmer)  # the two models are not significantly different
+Notice that we have fitted our models with REML = FALSE.
+
+REML stands for restricted (or “residual”) maximum likelihood and it is the default parameter estimation criterion for linear mixed models. As you probably guessed, ML stands for maximum likelihood - you can set REML = FALSE in your call to lmer to use ML estimates. However, ML estimates are known to be biased and with REML being usually less biased, REML estimates of variance components are generally preferred. This is why in our previous models we skipped setting REML - we just left it as default (i.e. REML = TRUE).
+
+REML assumes that the fixed effects structure is correct. You should use maximum likelihood when comparing models with different fixed effects, as ML doesn’t rely on the coefficients of the fixed effects - and that’s why we are refitting our full and reduced models above with the addition of REML = FALSE in the call.
+
+Even though you use ML to compare models, you should report parameter estimates from your final “best” REML model, as ML may underestimate variance of the random effects.
+
+NOTE 2: Models can also be compared using the AICc function from the AICcmodavg package. The Akaike Information Criterion (AIC) is a measure of model quality. AICc corrects for bias created by small sample size when estimating AIC. Generally, if models are within 2 AICc units of each other they are very similar. Within 5 units they are quite similar, over 10 units difference and you can probably be happy with the model with lower AICc. As with p-values though, there is no “hard line” that’s always correct.
+
+NOTE 3: There isn’t really an agreed upon way of dealing with the variance from the random effects in mixed models when it comes to assessing significance. Both p-values and effect sizes have issues, although from what I gather, p-values seem to cause more disagreement than effect sizes, at least in the R community.
+
+Random effects structure
+Now you might wonder about selecting your random effects. In general, I’d advise you to think about your experimental design, your system and data collected, as well as your questions.
+
+If your random effects are there to deal with pseudoreplication, then it doesn’t really matter whether they are “significant” or not: they are part of your design and have to be included. Imagine we tested our dragons multiple times - we then have to fit dragon identity as a random effect.
+
+On the other hand, if you are trying to account for other variability that you think might be important, it becomes a bit harder. Imagine we measured the mass of our dragons over their lifespans (let’s say 100 years). We might then want to fit year as a random effect to account for any temporal variation - maybe some years were affected by drought, the resources were scarce and so dragon mass was negatively impacted. Year would definitely be a sensible random effect, although strictly speaking not a must.
+
+When it comes to such random effects you can use model selection to help you decide what to keep in. Following Zuur’s advice, we use REML estimators for comparison of models with different random effects (we keep fixed effects constant). (Zuur: “Two models with nested random structures cannot be done with ML because the estimators for the variance terms are biased.” )
+
+NOTE: Do NOT vary random and fixed effects at the same time - either deal with your random effects structure or with your fixed effects structure at any given point.
+
+NOTE 2: Do NOT compare lmer models with lm models (or glmer with glm).
+
+Entire model selection
+A few notes on the process of model selection. There are two ways here: (i) “top-down”, where you start with a complex model and gradually reduce it, and (ii) “step up”, where you start with a simple model and add new variables to it. Unfortunately, you might arrive at different final models by using those strategies and so you need to be careful.
+
+The model selection process recommended by Zuur et al. (2009) is a top-down strategy and goes as follows:
+
+fit a full model (he even recommends “beyond optimal” i.e. more complex than you’d expect or want it to be)
+sort out the random effects structure (use REML likelihoods or REML AIC or BIC)
+sort out fixed effects structure (either use REML the F-statistic or the t-statistic or compare nested ML models - keep your random effects constant)
+once you arrive at the final model present it using REML estimation
+NOTE: At the risk of sounding like a broken record: I think it’s best to decide on what your model is based on biology/ecology/data structure etc. than through following model selection blindly. Additionally, just because something is non-significant doesn’t necessarily mean you should always get rid of it.
